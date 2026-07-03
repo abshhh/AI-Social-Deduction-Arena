@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}LLM Mafia Game Competition{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="/static/css/index.css">
+{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <a
+            class="header-link"
+            href="https://github.com/guzus/llm-mafia-game"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open the LLM Mafia Game repository on GitHub"
+        >
+            <div class="header banner-hero">
+                <img src="/static/images/github-banner.png" alt="LLM Mafia Game GitHub Banner" class="hero-banner">
+                <div class="hero-overlay">
+                    <div class="header-copy">
+                        <div class="hero-kicker">github.com/guzus/llm-mafia-game</div>
+                        <div class="season-badge">Season 2</div>
+                        <h1>LLM Mafia Game Competition</h1>
+                        <p class="header-subtitle">Frontier model tournaments, role-by-role stats, and complete game transcripts.</p>
+                    </div>
+                </div>
+                <div class="hero-bottom-fade" aria-hidden="true"></div>
+            </div>
+        </a>
+        
+        <!--
+        <div class="chart-container">
+            <h2>Win Rates by Model and Role</h2>
+            <div id="win-rate-chart" class="loading">Loading chart...</div>
+        </div>
+        
+        <div class="chart-container">
+            <h2>Games Played by Model and Role</h2>
+            <div id="games-played-chart" class="loading">Loading chart...</div>
+        </div>
+        -->
+        <h2>Model Statistics</h2>
+        <table id="stats-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Games Played</th>
+                    <th>Overall Win Rate</th>
+                    <th>Mafia Win Rate</th>
+                    <th>Villager Win Rate</th>
+                    <th>Doctor Win Rate</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="6" class="loading">Loading data...</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <h2>Recent Games</h2>
+        <table id="games-table">
+            <thead>
+                <tr>
+                    <th>Game ID</th>
+                    <th>Winner</th>
+                    <th>Participants</th>
+                    <th>Language</th>
+                    <th>Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="5" class="loading">Loading data...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script>
+        const minGamesForTopDisplay = {{ min_games_for_top_display | tojson }};
+
+        // Load charts directly as images (more efficient)
+        document.addEventListener('DOMContentLoaded', function() {
+            // Win rates chart
+            document.getElementById('win-rate-chart').innerHTML = 
+                `<img src="/api/chart/win_rates/image" class="chart" alt="Win Rates Chart" 
+                      onerror="loadFallbackChart('win-rate-chart')">`;
+            
+            // Games played chart
+            document.getElementById('games-played-chart').innerHTML = 
+                `<img src="/api/chart/games_played/image" class="chart" alt="Games Played Chart" 
+                      onerror="loadFallbackChart('games-played-chart')">`;
+        });
+        
+        // Fallback to base64 method if direct image loading fails
+        function loadFallbackChart(elementId) {
+            console.log(`Direct image loading failed for ${elementId}, trying base64 method...`);
+            
+            const endpoint = elementId === 'win-rate-chart' ? 
+                '/api/chart/win_rates' : '/api/chart/games_played';
+                
+            fetch(endpoint)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById(elementId).innerHTML = 'No data available';
+                    } else {
+                        document.getElementById(elementId).innerHTML = 
+                            `<img src="data:image/png;base64,${data.chart_url}" class="chart" 
+                                  alt="${elementId === 'win-rate-chart' ? 'Win Rates' : 'Games Played'} Chart">`;
+                    }
+                })
+                .catch(error => {
+                    console.error(`Error fetching chart data: ${error}`);
+                    document.getElementById(elementId).innerHTML = 'Error loading chart';
+                });
+        }
+        
+        // Fetch model statistics
+        fetch('/api/stats')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                const tableBody = document.querySelector('#stats-table tbody');
+                tableBody.innerHTML = '';
+                
+                if (Object.keys(data).length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="6" class="loading">No data available</td></tr>';
+                    return;
+                }
+                
+                // Sort models so only sufficiently sampled models can lead by win rate.
+                const sortedModels = Object.keys(data).sort((a, b) => {
+                    const aStats = data[a];
+                    const bStats = data[b];
+                    const aEligible = aStats.games_played >= minGamesForTopDisplay;
+                    const bEligible = bStats.games_played >= minGamesForTopDisplay;
+
+                    if (aEligible !== bEligible) {
+                        return aEligible ? -1 : 1;
+                    }
+                    if (bStats.win_rate !== aStats.win_rate) {
+                        return bStats.win_rate - aStats.win_rate;
+                    }
+                    if (bStats.games_played !== aStats.games_played) {
+                        return bStats.games_played - aStats.games_played;
+                    }
+                    return a.localeCompare(b);
+                });
+                
+                for (const model of sortedModels) {
+                    const stats = data[model];
+                    const row = document.createElement('tr');
+                    const modelLink = `/model/${encodeURIComponent(model)}`;
+
+                    row.innerHTML = `
+                        <td><a class="model-link" href="${modelLink}">${window.LlmBranding.renderModelIdentity(model)}</a></td>
+                        <td>${stats.games_played}</td>
+                        <td>${(stats.win_rate * 100).toFixed(2)}%</td>
+                        <td>${(stats.mafia_win_rate * 100).toFixed(2)}% (${stats.mafia_wins}/${stats.mafia_games})</td>
+                        <td>${(stats.villager_win_rate * 100).toFixed(2)}% (${stats.villager_wins}/${stats.villager_games})</td>
+                        <td>${(stats.doctor_win_rate * 100).toFixed(2)}% (${stats.doctor_wins}/${stats.doctor_games})</td>
+                    `;
+                    
+                    tableBody.appendChild(row);
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching model statistics:', error);
+                document.querySelector('#stats-table tbody').innerHTML = '<tr><td colspan="6" class="loading">Error loading data</td></tr>';
+            });
+        
+        // Fetch recent games
+        fetch('/api/games?limit=15')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                const tableBody = document.querySelector('#games-table tbody');
+                tableBody.innerHTML = '';
+                
+                if (data.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="5" class="loading">No games available</td></tr>';
+                    return;
+                }
+                
+                // Sort games by timestamp (newest first)
+                data.sort((a, b) => b.timestamp - a.timestamp);
+                
+                for (const game of data) {
+                    const row = document.createElement('tr');
+                    
+                    // Format timestamp
+                    const date = new Date(game.timestamp * 1000);
+                    const formattedDate = date.toLocaleString();
+                    
+                    // Format participants
+                    const participants = Object.entries(game.participants)
+                        .map(([player, roleData]) => {
+                            // Handle both old and new format
+                            let role, modelId;
+                            if (typeof roleData === 'object') {
+                                role = roleData.role;
+                                modelId = roleData.model_name;
+                            } else {
+                                // Legacy format where roleData is just the role string
+                                role = roleData;
+                                modelId = player;
+                            }
+
+                            return `<span class="game-participant">${window.LlmBranding.renderModelIdentity(modelId, { compact: true })} <span class="participant-role">(${role})</span></span>`;
+                        })
+                        .join(', ');
+                    
+                    row.innerHTML = `
+                        <td><a href="/game/${encodeURIComponent(game.game_id)}" class="game-id">${game.game_id}</a></td>
+                        <td>${game.winner}</td>
+                        <td>${participants}</td>
+                        <td>${game.language || "English"}</td>
+                        <td>${formattedDate}</td>
+                    `;
+                    
+                    tableBody.appendChild(row);
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching recent games:', error);
+                document.querySelector('#games-table tbody').innerHTML = '<tr><td colspan="5" class="loading">Error loading data</td></tr>';
+            });
+    </script>
+{% endblock %}

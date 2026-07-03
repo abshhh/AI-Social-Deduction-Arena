@@ -1,0 +1,1569 @@
+{% extends "base.html" %}
+
+{% block title %}Game Details - LLM Mafia Game Competition{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="/static/css/game_detail.css">
+    <link rel="stylesheet" href="/static/css/game_visualization.css">
+{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <!-- Add sticky banner right after container -->
+        <div id="stickyBanner" class="sticky-banner">
+            <div class="sticky-banner-content">
+                <div class="sticky-players-list">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+        
+        <a href="/" class="back-link">← Back to Dashboard</a>
+        <h1>Game Details</h1>
+        
+        <div id="gameInfo" class="game-info">
+            <div class="loading">
+                <div class="spinner"></div>
+                <div>Loading game information...</div>
+            </div>
+        </div>
+        
+        <div class="tab-container">
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('dialogue')">Full Dialogue</div>
+                <div id="criticTab" class="tab" onclick="switchTab('critic')" style="display: none;">Game Critic</div>
+                <!-- <div class="tab" onclick="switchTab('summary')">Game Summary</div> -->
+                <!-- <div class="tab" onclick="switchTab('visualization')">Game Visualization</div> -->
+            </div>
+            
+            <div id="summary" class="tab-content">
+                <h2>Game Log</h2>
+                <div id="gameLog" class="game-log">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <div>Loading game log...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="dialogue" class="tab-content active">
+                <h2>Full Dialogue</h2>
+                <div id="gameDialogue" class="dialogue">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <div>Loading dialogue...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="visualization" class="tab-content">
+                <h2>Game Visualization</h2>
+                <div id="gameVisualization" class="visualization-container">
+                    <div class="visualization-loading">
+                        <div class="visualization-spinner"></div>
+                        <div>Loading visualization...</div>
+                    </div>
+                </div>
+                
+                <div class="controls">
+                    <button id="prevBtn" class="control-button prev" disabled>Previous</button>
+                    <button id="playPauseBtn" class="control-button play">Play</button>
+                    <button id="nextBtn" class="control-button next" disabled>Next</button>
+                </div>
+                
+                <div class="game-info-panel">
+                    <div id="gamePhase" class="game-phase phase-day">Day Phase</div>
+                    <div id="roundInfo" class="round-info">Round 1</div>
+                    <div class="event-log" id="eventLog">
+                        <div class="event-item">Game started.</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="critic" class="tab-content">
+                <h2>Game Critic Review</h2>
+                <div id="gameCritic" class="critic-review">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <div>Loading critic review...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="gameResult" class="game-result">
+            <div class="loading">
+                <div class="spinner"></div>
+                <div>Loading game result...</div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script>
+        // Get game ID from URL
+        const gameId = window.location.pathname.split('/').pop();
+        const escapeHtml = window.LlmBranding.escapeHtml;
+
+        function normalizeMessageText(rawContent) {
+            const content = String(rawContent || '').trim();
+            if (!content.startsWith('ERROR: Could not get response')) {
+                return content;
+            }
+            return 'Model response unavailable for this turn because the upstream provider request failed.';
+        }
+
+        function renderMessageContent(rawContent) {
+            return escapeHtml(normalizeMessageText(rawContent)).replace(/\n/g, '<br>');
+        }
+
+        function summarizeMessageContent(rawContent, limit = 100) {
+            const normalized = normalizeMessageText(rawContent).replace(/\s+/g, ' ').trim();
+            return normalized.length > limit ? `${normalized.substring(0, limit)}...` : normalized;
+        }
+        
+        // Function to share a specific message
+        function shareMessage(messageId) {
+            // Create the share URL with message ID as hash
+            const shareUrl = `${window.location.origin}/game/${gameId}#${messageId}`;
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(shareUrl)
+                .then(() => {
+                    // Show success notification
+                    const notification = document.createElement('div');
+                    notification.className = 'share-notification';
+                    notification.textContent = 'Copied link';
+                    document.body.appendChild(notification);
+                    
+                    // Update the share link icon temporarily
+                    const shareLink = document.querySelector(`[data-message-id="${messageId}"]`);
+                    if (shareLink) {
+                        const originalContent = shareLink.innerHTML;
+                        shareLink.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+                                <path fill="#28a745" d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/>
+                            </svg>
+                        `;
+                        
+                        // Restore original content after 2 seconds
+                        setTimeout(() => {
+                            shareLink.innerHTML = originalContent;
+                        }, 2000);
+                    }
+                    
+                    // Remove notification after animation
+                    setTimeout(() => {
+                        document.body.removeChild(notification);
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Could not copy text: ', err);
+                    alert('Failed to copy link to clipboard');
+                });
+        }
+        
+        // Function to scroll to a shared message when the page loads
+        function scrollToSharedMessage() {
+            if (window.location.hash) {
+                const messageId = window.location.hash.substring(1);
+                const element = document.getElementById('msg-' + messageId);
+                if (element) {
+                    // Wait a bit for the page to fully load
+                    setTimeout(() => {
+                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        // Highlight the shared message
+                        element.style.boxShadow = '0 0 15px rgba(255, 215, 0, 0.7)';
+                        element.style.transition = 'box-shadow 0.5s ease-in-out';
+                        
+                        // Remove highlight after 3 seconds
+                        setTimeout(() => {
+                            element.style.boxShadow = 'none';
+                        }, 3000);
+                    }, 750);
+                }
+            }
+        }
+        
+        // Function to get player name and role from participant data
+        function getPlayerInfo(playerName, roleData) {
+            let role = roleData;
+            let modelId = playerName;  // Default to playerName if model_name not available
+            
+            if (typeof roleData === 'object') {
+                if (roleData.role) {
+                    role = roleData.role;
+                }
+                if (roleData.model_name) {
+                    modelId = roleData.model_name;
+                }
+            }
+            
+            // Ensure role is a string before using it
+            const roleClass = typeof role === 'string' ? role.toLowerCase() : '';
+            const modelName = window.LlmBranding.getModelLabel(modelId);
+            
+            return { playerName, role, roleClass, modelName, modelId };
+        }
+        
+        // Function to create model info mapping
+        function createModelInfoMapping(participants) {
+            const modelInfo = {};
+            Object.entries(participants || {}).forEach(([playerName, roleData]) => {
+                const { role, roleClass, modelName, modelId } = getPlayerInfo(playerName, roleData);
+                
+                // Store by model name for backward compatibility
+                const model = (typeof roleData === 'object' && roleData.model_name) ? roleData.model_name : playerName;
+                
+                modelInfo[model] = {
+                    playerName,
+                    role,
+                    roleClass,
+                    modelName,
+                    modelId
+                };
+                
+                // Also store by player name for new structure
+                modelInfo[playerName] = {
+                    playerName,
+                    role,
+                    roleClass,
+                    modelName,
+                    modelId,
+                    model
+                };
+            });
+            return modelInfo;
+        }
+        
+        // Function to sanitize participant data
+        function sanitizeRoles(participants) {
+            if (!participants) return participants;
+            
+            const sanitized = {};
+            Object.entries(participants).forEach(([model, roleData]) => {
+                if (typeof roleData === 'object') {
+                    // Make sure role is a string
+                    if (roleData.role && typeof roleData.role !== 'string') {
+                        roleData.role = String(roleData.role);
+                    }
+                    sanitized[model] = roleData;
+                } else {
+                    // Convert non-string roles to strings
+                    sanitized[model] = typeof roleData === 'string' ? roleData : String(roleData);
+                }
+            });
+            return sanitized;
+        }
+        
+        // Function to get eliminated players up to a specific round
+        function getEliminatedPlayers(data, roundIndex, includeCurrentRound = false) {
+            const eliminatedPlayers = new Set();
+            
+            // Determine which players are eliminated up to this point
+            for (let i = 0; i < roundIndex; i++) {
+                const round = data.rounds[i];
+                if (round.eliminations) {
+                    round.eliminations.forEach(player => eliminatedPlayers.add(player));
+                }
+            }
+            
+            // For end of round, also include eliminations from the current round
+            if (includeCurrentRound && data.rounds[roundIndex].eliminations) {
+                data.rounds[roundIndex].eliminations.forEach(player => eliminatedPlayers.add(player));
+            }
+            
+            return eliminatedPlayers;
+        }
+        
+        // Fetch game data
+        fetch(`/api/game/${gameId}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Game data received:', data);
+                
+                // Sanitize participant data to prevent toLowerCase errors
+                if (data.participants) {
+                    data.participants = sanitizeRoles(data.participants);
+                }
+                
+                gameData = data;
+                displayGameInfo(data);
+                displayGameLog(data);
+                displayDialogue(data);
+                displayGameResult(data);
+                initializeVisualization(data);
+                
+                // Only show critic tab and display critic review if it exists
+                if (data.critic_review) {
+                    document.getElementById('criticTab').style.display = 'block';
+                    displayCriticReview(data);
+                } else {
+                    // Hide the critic tab content completely
+                    document.getElementById('critic').style.display = 'none';
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching game data:', error);
+                document.getElementById('gameInfo').innerHTML = `
+                    <div class="error">
+                        Error loading game information: ${error.message}
+                    </div>`;
+                document.getElementById('gameLog').innerHTML = `
+                    <div class="error">
+                        Error loading game log: ${error.message}
+                    </div>`;
+                document.getElementById('gameDialogue').innerHTML = `
+                    <div class="error">
+                        Error loading dialogue: ${error.message}
+                    </div>`;
+                document.getElementById('gameResult').innerHTML = `
+                    <div class="error">
+                        Error loading game result: ${error.message}
+                    </div>`;
+                document.getElementById('gameVisualization').innerHTML = '<div class="error">Error loading game visualization</div>';
+                document.getElementById('gameCritic').innerHTML = '<div class="error">Error loading critic review</div>';
+            });
+        
+        // Function to display game information
+        function displayGameInfo(data) {
+            const gameInfoElement = document.getElementById('gameInfo');
+            
+            // Display game info
+            const timestamp = new Date(data.timestamp * 1000).toLocaleString();
+            const participants = data.participants || {};
+            
+            // Create participant elements with appropriate colors
+            const participantsHtml = Object.entries(participants)
+                .map(([playerName, roleData]) => {
+                    const { role, roleClass, modelId } = getPlayerInfo(playerName, roleData);
+                    
+                    // Add crown icon for winners based on the winner team
+                    const isWinner = 
+                        (data.winner.toLowerCase().includes('mafia') && role === 'Mafia') || 
+                        (data.winner.toLowerCase().includes('villager') && (role === 'Villager' || role === 'Doctor'));
+                    
+                    const crownIcon = isWinner ? '<span class="winner-crown" title="Winner">👑</span> ' : '';
+                    
+                    return `<div class="participant ${roleClass}">${crownIcon}${playerName} (${role}) <span class="model-name">${window.LlmBranding.renderModelIdentity(modelId, { compact: true })}</span></div>`;
+                })
+                .join('');
+            
+            gameInfoElement.innerHTML = `
+                <h2>Game: ${data.game_id}</h2>
+                <p><strong>Winner:</strong> ${data.winner}</p>
+                <p><strong>Game Type:</strong> ${data.game_type || 'Classic Mafia'}</p>
+                <p><strong>Language:</strong> ${data.language || 'English'}</p>
+                <p><strong>Time:</strong> ${timestamp}</p>
+                <h3>Participants:</h3>
+                <div class="participants-container">
+                    ${participantsHtml}
+                </div>
+            `;
+            
+            // Update page title
+            document.title = `Game ${data.game_id} - LLM Mafia Game Competition`;
+            
+            // Add this at the end of the displayGameInfo function
+            initializeStickyBanner(data.participants);
+        }
+
+        function initializeStickyBanner(participants) {
+            const stickyBanner = document.getElementById('stickyBanner');
+            const playersList = stickyBanner.querySelector('.sticky-players-list');
+            
+            // Create player items for the sticky banner
+            Object.entries(participants).forEach(([playerName, roleData]) => {
+                const { role, roleClass, modelId } = getPlayerInfo(playerName, roleData);
+                
+                const playerItem = document.createElement('div');
+                playerItem.className = `sticky-player-item ${roleClass}`;
+                playerItem.innerHTML = `
+                    <span class="sticky-player-name">${playerName}</span>
+                    <span class="sticky-player-role">(${role})</span>
+                    <span class="sticky-player-model">${window.LlmBranding.renderModelIdentity(modelId, { compact: true })}</span>
+                `;
+                
+                playersList.appendChild(playerItem);
+            });
+            
+            // Add scroll event listener
+            let gameInfoRect = document.querySelector('.game-info').getBoundingClientRect();
+            let bannerVisible = false;
+            
+            // Function to check if screen width is sufficient for sticky banner
+            function isScreenWidthSufficient() {
+                // Only show sticky banner if window width is greater than 1000px
+                // You can adjust this threshold as needed
+                return window.innerWidth > 1500;
+            }
+            
+            window.addEventListener('scroll', () => {
+                const scrollPosition = window.scrollY;
+                
+                // Only show banner when scrolling past game info section AND screen height is sufficient
+                if (scrollPosition > gameInfoRect.bottom && !bannerVisible && isScreenWidthSufficient()) {
+                    stickyBanner.classList.add('visible');
+                    bannerVisible = true;
+                } else if ((scrollPosition <= gameInfoRect.bottom || !isScreenWidthSufficient()) && bannerVisible) {
+                    stickyBanner.classList.remove('visible');
+                    bannerVisible = false;
+                }
+            });
+            
+            // Update gameInfoRect and check screen height on window resize
+            window.addEventListener('resize', () => {
+                gameInfoRect = document.querySelector('.game-info').getBoundingClientRect();
+                
+                // Hide banner if screen becomes too small
+                if (!isScreenWidthSufficient() && bannerVisible) {
+                    stickyBanner.classList.remove('visible');
+                    bannerVisible = false;
+                }
+            });
+        }
+        
+        // Function to display game log
+        function displayGameLog(data) {
+            const gameLogElement = document.getElementById('gameLog');
+            
+            // Display rounds
+            if (!data.rounds || data.rounds.length === 0) {
+                gameLogElement.innerHTML = '<div class="error">No game log data available</div>';
+                return;
+            }
+            
+            // Create a mapping of model names to their roles for coloring
+            const modelRoles = {};
+            const participants = data.participants || {};
+            Object.entries(participants).forEach(([playerName, roleData]) => {
+                // Handle both old and new format
+                let role;
+                let modelName = roleData.model_name || playerName;
+                
+                if (typeof roleData === 'object') {
+                    role = roleData.role;
+                } else {
+                    // Legacy format where roleData is just the role string
+                    role = roleData;
+                }
+                
+                modelRoles[modelName] = typeof role === 'string' ? role.toLowerCase() : '';
+                // Also store by player name for new structure
+                modelRoles[playerName] = typeof role === 'string' ? role.toLowerCase() : '';
+            });
+            
+            let gameLogHtml = '';
+            
+            // Process each round
+            data.rounds.forEach((round, index) => {
+                let roundHtml = `<div class="round">
+                    <div class="round-title">Round ${index + 1}</div>`;
+                
+                // Add player status at the start of the round
+                roundHtml += createPlayerStatusSection(data, index, 'start');
+                
+                // Process actions (votes, etc.)
+                if (round.actions && typeof round.actions === 'object') {
+                    roundHtml += `<div class="round-section">Actions:</div>`;
+                    Object.entries(round.actions).forEach(([model, action]) => {
+                        const modelName = model.split('/').pop();
+                        const roleClass = modelRoles[model] || '';
+                        
+                        roundHtml += `<div class="action ${roleClass}">
+                            <div class="action-header ${roleClass}">${modelName}:</div>
+                            ${action}
+                        </div>`;
+                    });
+                }
+                
+                // Process eliminations if any
+                if (round.eliminations && round.eliminations.length > 0) {
+                    roundHtml += `<div class="round-section">Eliminations:</div>`;
+                    round.eliminations.forEach(eliminated => {
+                        const modelName = eliminated.split('/').pop();
+                        roundHtml += `<div class="elimination">
+                            ${modelName} was eliminated
+                        </div>`;
+                    });
+                }
+                
+                // Process confirmation votes if any
+                if (round.confirmation_votes) {
+                    roundHtml += `<div class="round-section">Confirmation Votes:</div>`;
+                    
+                    // Get the player who was up for elimination
+                    let playerToEliminate = '';
+                    if (round.eliminated_by_vote && round.eliminated_by_vote.length > 0) {
+                        playerToEliminate = round.eliminated_by_vote[0].split('/').pop();
+                    } else if (round.vote_counts) {
+                        // Find the player with the most votes
+                        let maxVotes = 0;
+                        Object.entries(round.vote_counts).forEach(([player, count]) => {
+                            if (count > maxVotes) {
+                                maxVotes = count;
+                                playerToEliminate = player.split('/').pop();
+                            }
+                        });
+                    }
+                    
+                    // Display confirmation vote results
+                    const agreeVotes = round.confirmation_votes.agree || [];
+                    const disagreeVotes = round.confirmation_votes.disagree || [];
+                    
+                    roundHtml += `<div class="confirmation-vote">
+                        <div class="vote-summary">Confirmation vote for eliminating ${playerToEliminate}</div>
+                        <div class="vote-result">
+                            <span class="agree-votes">Agree: ${agreeVotes.length}</span> | 
+                            <span class="disagree-votes">Disagree: ${disagreeVotes.length}</span>
+                        </div>
+                        <div class="vote-details">
+                            <div class="agree-voters">
+                                <strong>Agreed:</strong> ${agreeVotes.map(v => v.split('/').pop()).join(', ') || 'None'}
+                            </div>
+                            <div class="disagree-voters">
+                                <strong>Disagreed:</strong> ${disagreeVotes.map(v => v.split('/').pop()).join(', ') || 'None'}
+                            </div>
+                        </div>
+                    </div>`;
+                }
+                
+                // Process conversations/dialogues (summary view)
+                if (round.messages && round.messages.length > 0) {
+                    roundHtml += `<div class="round-section">Conversation Summary:</div>`;
+                    roundHtml += `<div class="action">
+                        <div class="action-header">Round ${index + 1} had ${round.messages.length} messages</div>
+                        <a href="#" onclick="switchTab('dialogue'); return false;">View full dialogue</a>
+                    </div>`;
+                }
+                roundHtml += '</div>';
+                gameLogHtml += roundHtml;
+            });
+            
+            gameLogElement.innerHTML = gameLogHtml;
+        }
+        
+        // Function to create player status section showing alive players and their roles
+        function createPlayerStatusSection(data, roundIndex, position) {
+            const participants = data.participants || {};
+            const eliminatedPlayers = getEliminatedPlayers(data, roundIndex, position === 'end');
+            
+            // Create the player status section
+            let html = `<div class="player-status-section ${position}-of-round">
+                <div class="player-status-header">${position === 'start' ? 'Players Alive at Start of Round' : 'Players Alive at End of Round'}</div>
+                <div class="player-status-list">`;
+            
+            // Add each player with their role
+            Object.entries(participants).forEach(([model, roleData]) => {
+                const isEliminated = eliminatedPlayers.has(model);
+                if (!isEliminated) {
+                    const { playerName, role, roleClass, modelId } = getPlayerInfo(model, roleData);
+                    
+                    html += `<div class="player-status-item ${roleClass}">
+                        <span class="player-status-name">${playerName}</span>
+                        <span class="player-status-role">${role}</span>
+                        <span class="player-status-model">${window.LlmBranding.renderModelIdentity(modelId, { compact: true })}</span>
+                    </div>`;
+                }
+            });
+            
+            html += `</div></div>`;
+            return html;
+        }
+        
+        // Function to display full dialogue
+        function displayDialogue(data) {
+            const dialogueElement = document.getElementById('gameDialogue');
+            
+            if (!data.rounds || data.rounds.length === 0) {
+                dialogueElement.innerHTML = '<div class="error">No dialogue data available</div>';
+                return;
+            }
+            
+            // Create a mapping of model names to their roles and player names for coloring
+            const modelInfo = createModelInfoMapping(data.participants);
+            
+            let dialogueHtml = '';
+            
+            // Process each round's conversation
+            data.rounds.forEach((round, index) => {
+                // Add round header
+                dialogueHtml += `<h3>Round ${index + 1}</h3>`;
+                
+                // Add player status at the start of the round
+                dialogueHtml += `<div class="dialogue-message" style="background-color: #f5f5f5; border-left: 5px solid #28a745; margin-top: 15px;">
+                    <div class="dialogue-speaker phase-header"><strong>Players Alive at Start of Round ${index + 1}</strong></div>
+                    <div class="dialogue-content">
+                        <div class="player-status-list" style="display: flex; flex-wrap: wrap; gap: 10px;">
+                            ${createPlayerStatusListHTML(data, index, 'start')}
+                        </div>
+                    </div>
+                </div>`;
+                
+                // Add round summary
+                dialogueHtml += `<div class="dialogue-message" style="background-color: #f8f8f8; border-left: 5px solid #333;">
+                    <div class="dialogue-speaker phase-header"><strong>Round Summary</strong></div>
+                    <div class="dialogue-content">`;
+                
+                // Show eliminations if any
+                if (round.eliminations && round.eliminations.length > 0) {
+                    const eliminatedNames = round.eliminations.map(model => {
+                        const info = modelInfo[model] || { playerName: model.split('/').pop() };
+                        return `💀 ${info.playerName}`;
+                    });
+                    dialogueHtml += `<div class="elimination" style="display: inline-block; margin: 5px;">
+                        <strong>Eliminated:</strong> ${eliminatedNames.join(' • ')}
+                    </div>`;
+                }
+                
+                // Show round outcome
+                if (round.outcome) {
+                    dialogueHtml += `<div style="margin-top: 10px;">${round.outcome}</div>`;
+                }
+                
+                dialogueHtml += `</div></div>`;
+                
+                // Add the actual dialogue messages in chronological order
+                if (round.messages && round.messages.length > 0) {
+                    dialogueHtml += `<div class="dialogue-message" style="background-color: #f5f5f5; border-left: 5px solid #666; margin-top: 15px;">
+                        <div class="dialogue-speaker phase-header"><strong>Full Dialogue (Round ${index + 1})</strong></div>
+                        <div class="dialogue-content">
+                            <p>Below is the complete conversation between all players during this round.</p>
+                        </div>
+                    </div>`;
+                    
+                    // Find the last night message index
+                    let lastNightMessageIndex = -1;
+                    for (let i = 0; i < round.messages.length; i++) {
+                        if (round.messages[i].phase === 'night') {
+                            lastNightMessageIndex = i;
+                        }
+                    }
+                    
+                    // Find the first day_discussion message index
+                    let firstDayDiscussionIndex = -1;
+                    for (let i = 0; i < round.messages.length; i++) {
+                        if (round.messages[i].phase === 'day_discussion') {
+                            firstDayDiscussionIndex = i;
+                            break;
+                        }
+                    }
+                    
+                    // Find the transition from day_discussion to day_voting
+                    let discussionToVotingTransitionIndex = -1;
+                    for (let i = 0; i < round.messages.length - 1; i++) {
+                        if (round.messages[i].phase === 'day_discussion' && 
+                            round.messages[i+1].phase === 'day_voting') {
+                            discussionToVotingTransitionIndex = i+1;
+                            break;
+                        }
+                    }
+                    
+                    // Display all messages in chronological order
+                    round.messages.forEach((message, msgIndex) => {
+                        const model = message.speaker || 'System';
+                        const info = modelInfo[model] || { 
+                            playerName: model.split('/').pop(),
+                            role: '',
+                            roleClass: ''
+                        };
+                        const roleClass = info.roleClass;
+                        
+                        // Set border color based on phase
+                        const borderStyle = message.phase === 'night' 
+                            ? 'border-left: 3px solid #0066cc; background-color: #f0f8ff;' 
+                            : 'border-left: 3px solid #ffcc00; background-color: #fffaf0;';
+                        
+                        // Add last_words tag if message type is last_words
+                        const lastWordsTag = message.type === 'last_words' 
+                            ? '<span class="phase-tag last-words">Last Words</span>' 
+                            : '';
+                        
+                        // Insert Discussion Phase Begins message before the first day_discussion message
+                        if (msgIndex === firstDayDiscussionIndex) {
+                            dialogueHtml += `<div class="dialogue-message" style="margin-left: 20px; background-color: #f8f8f8; border-left: 5px solid #333; margin-top: 15px; margin-bottom: 15px;">
+                                <div class="dialogue-speaker phase-header"><strong>Discussion Phase Begins</strong></div>
+                                <div class="dialogue-content">
+                                    <p>The day has arrived. Players will now discuss and try to identify the Mafia members among them.</p>
+                                </div>
+                            </div>`;
+                        }
+                        
+                        // Insert Voting Phase Begins message at the transition point
+                        if (msgIndex === discussionToVotingTransitionIndex) {
+                            dialogueHtml += `<div class="dialogue-message" style="margin-left: 20px; background-color: #f8f8f8; border-left: 5px solid #333; margin-top: 15px; margin-bottom: 15px;">
+                                <div class="dialogue-speaker phase-header"><strong>Voting Phase Begins</strong></div>
+                                <div class="dialogue-content">
+                                    <p>The discussion phase has ended. Players will now make their final arguments and vote to eliminate a suspected Mafia member.</p>
+                                </div>
+                            </div>`;
+                        }
+                        
+                        // Get role from data.participants or from message
+                        let role = '';
+                        if (data.participants[model]) {
+                            if (typeof data.participants[model] === 'object') {
+                                role = data.participants[model].role;
+                            } else {
+                                role = data.participants[model];
+                            }
+                        } else if (message.role) {
+                            role = message.role;
+                        }
+                        
+                        dialogueHtml += `<div id="msg-r${index+1}-m${msgIndex+1}" class="dialogue-message ${roleClass}" style="margin-left: 20px; ${borderStyle}">
+                            <div class="dialogue-speaker ${roleClass}">
+                                ${info.playerName} (${role}) <span class="model-name">${window.LlmBranding.renderModelIdentity(info.modelId || model, { compact: true })}</span>
+                                ${message.phase === 'night' ? '<span class="phase-tag night">Night</span>' : '<span class="phase-tag day">Day</span>'}
+                                ${message.phase === 'day_discussion' ? '<span class="phase-tag discussion">Discussion</span>' : ''}
+                                ${message.phase === 'day_voting' ? '<span class="phase-tag voting">Voting</span>' : ''}
+                                ${lastWordsTag}
+                                <span style="float: right; font-size: 0.8em; color: #666;">
+                                    Message #${msgIndex + 1}
+                                    <a href="#" class="share-link" 
+                                       data-message-id="r${index+1}-m${msgIndex+1}"
+                                       onclick="shareMessage('r${index+1}-m${msgIndex+1}'); return false;" 
+                                       title="Copy link to message">
+                                        📎
+                                    </a>
+                                </span>
+                            </div>
+                            <div class="dialogue-content">${renderMessageContent(message.content)}</div>
+                        </div>`;
+
+                        // Insert night phase summary after the last night message
+                        if (msgIndex === lastNightMessageIndex && message.phase === 'night') {
+                            // Create a section for Night Phase Results
+                            dialogueHtml += createNightPhaseSummary(index, data.rounds[index], data.participants);
+                        }
+                    });
+                    
+                    // Add a section at the end of the round to show who died by vote
+                    if (round.eliminated_by_vote && round.eliminated_by_vote.length > 0) {
+                        // Create a visually distinct section for vote eliminations
+                        dialogueHtml += `<div class="dialogue-message" style="margin-left: 20px; margin-top: 20px; background-color: #ffeeee; border-left: 5px solid #d9534f;">
+                            <div class="dialogue-speaker phase-header"><strong>End of Round ${index + 1} - Vote Results</strong></div>
+                            <div class="dialogue-content">`;
+                        
+                        // Use vote_counts and vote_details if available
+                        if (round.vote_counts && round.vote_details) {
+                            // Display each player eliminated by vote with detailed vote information
+                            round.eliminated_by_vote.forEach(eliminated => {
+                                const info = modelInfo[eliminated] || { playerName: eliminated.split('/').pop() };
+                                const votes = round.vote_counts[eliminated] || 0;
+                                const voters = round.vote_details[eliminated] || [];
+                                const voterNames = voters.map(voter => {
+                                    const voterInfo = modelInfo[voter] || { playerName: voter.split('/').pop() };
+                                    return voterInfo.playerName;
+                                });
+                                
+                                dialogueHtml += `<div class="elimination" style="display: block; margin: 10px 0;">
+                                    <strong>💀 ${info.playerName} was eliminated by the town</strong>
+                                </div>`;
+                            });
+                            
+                            // Show all votes, even for players who weren't eliminated
+                            dialogueHtml += `<div style="margin-top: 15px; padding-top: 10px; border-top: 1px dashed #ddd;">
+                                <strong>All Votes:</strong>
+                            </div>`;
+                            
+                            Object.entries(round.vote_counts).forEach(([target, count]) => {
+                                const targetInfo = modelInfo[target] || { playerName: target.split('/').pop() };
+                                const voters = round.vote_details[target] || [];
+                                const voterNames = voters.map(voter => {
+                                    const voterInfo = modelInfo[voter] || { playerName: voter.split('/').pop() };
+                                    return voterInfo.playerName;
+                                });
+                                
+                                dialogueHtml += `<div class="vote-item">
+                                    <div class="vote-target">
+                                        <span class="vote-name">To Kill: ${targetInfo.playerName}</span>
+                                        <span class="vote-count">${count} vote${count > 1 ? 's' : ''}</span>
+                                    </div>
+                                    <div class="vote-voters">From: ${voterNames.join(', ')}</div>
+                                </div>`;
+                            });
+                        }
+                        
+                        // Add confirmation votes at the bottom of vote results if available
+                        if (round.confirmation_votes) {
+                            // Get the player who was up for elimination
+                            let playerToEliminate = '';
+                            if (round.eliminated_by_vote && round.eliminated_by_vote.length > 0) {
+                                const eliminatedModel = round.eliminated_by_vote[0];
+                                const info = modelInfo[eliminatedModel] || { playerName: eliminatedModel.split('/').pop() };
+                                playerToEliminate = info.playerName;
+                            } else if (round.vote_counts) {
+                                // Find the player with the most votes
+                                let maxVotes = 0;
+                                let maxVotedModel = '';
+                                Object.entries(round.vote_counts).forEach(([player, count]) => {
+                                    if (count > maxVotes) {
+                                        maxVotes = count;
+                                        maxVotedModel = player;
+                                    }
+                                });
+                                if (maxVotedModel) {
+                                    const info = modelInfo[maxVotedModel] || { playerName: maxVotedModel.split('/').pop() };
+                                    playerToEliminate = info.playerName;
+                                }
+                            }
+                            
+                            // Display confirmation vote results
+                            const agreeVotes = round.confirmation_votes.agree || [];
+                            const disagreeVotes = round.confirmation_votes.disagree || [];
+                            
+                            const agreeVoterNames = agreeVotes.map(voter => {
+                                const info = modelInfo[voter] || { playerName: voter.split('/').pop() };
+                                return info.playerName;
+                            });
+                            
+                            const disagreeVoterNames = disagreeVotes.map(voter => {
+                                const info = modelInfo[voter] || { playerName: voter.split('/').pop() };
+                                return info.playerName;
+                            });
+                            
+                            dialogueHtml += `<div style="margin-top: 20px; padding: 10px; background-color: #f5f8ff; border-radius: 4px; border-left: 4px solid #4a6da7;">
+                                <strong>Confirmation Vote for ${playerToEliminate}:</strong><br>
+                                <span style="color: green; display: block; margin-top: 5px;">✓ Agree: ${agreeVotes.length} (${agreeVoterNames.join(', ') || 'None'})</span>
+                                <span style="color: red; display: block; margin-top: 5px;">✗ Disagree: ${disagreeVotes.length} (${disagreeVoterNames.join(', ') || 'None'})</span>
+                            </div>`;
+                        }
+                        
+                        dialogueHtml += `</div></div>`;
+                    } else if (round.vote_counts && round.vote_details && Object.keys(round.vote_counts).length > 0) {
+                        // If there are votes but no one was eliminated by vote, still show the voting results
+                        dialogueHtml += `<div class="dialogue-message" style="margin-left: 20px; margin-top: 20px; background-color: #f8f8f8; border-left: 5px solid #666;">
+                            <div class="dialogue-speaker phase-header"><strong>End of Round ${index + 1} - Vote Results</strong></div>
+                            <div class="dialogue-content">
+                                <div style="margin-bottom: 10px;"><em>No one was eliminated by vote in this round.</em></div>
+                                <div style="margin-top: 15px; padding-top: 10px; border-top: 1px dashed #ddd;">
+                                    <strong>All Votes:</strong>
+                                </div>`;
+                        
+                        Object.entries(round.vote_counts).forEach(([target, count]) => {
+                            const targetInfo = modelInfo[target] || { playerName: target.split('/').pop() };
+                            const voters = round.vote_details[target] || [];
+                            const voterNames = voters.map(voter => {
+                                const voterInfo = modelInfo[voter] || { playerName: voter.split('/').pop() };
+                                return voterInfo.playerName;
+                            });
+                            
+                            dialogueHtml += `<div class="vote-item">
+                                <div class="vote-target">
+                                    <span class="vote-name">To Kill: ${targetInfo.playerName}</span>
+                                    <span class="vote-count">${count} vote${count > 1 ? 's' : ''}</span>
+                                </div>
+                                <div class="vote-voters">From: ${voterNames.join(', ')}</div>
+                            </div>`;
+                        });
+                        
+                        // Add confirmation votes at the bottom of vote results if available
+                        if (round.confirmation_votes) {
+                            // Get the player who was up for elimination (if any)
+                            let playerToEliminate = '';
+                            if (round.vote_counts) {
+                                // Find the player with the most votes
+                                let maxVotes = 0;
+                                let maxVotedModel = '';
+                                Object.entries(round.vote_counts).forEach(([player, count]) => {
+                                    if (count > maxVotes) {
+                                        maxVotes = count;
+                                        maxVotedModel = player;
+                                    }
+                                });
+                                if (maxVotedModel) {
+                                    const info = modelInfo[maxVotedModel] || { playerName: maxVotedModel.split('/').pop() };
+                                    playerToEliminate = info.playerName;
+                                }
+                            }
+                            
+                            // Display confirmation vote results
+                            const agreeVotes = round.confirmation_votes.agree || [];
+                            const disagreeVotes = round.confirmation_votes.disagree || [];
+                            
+                            const agreeVoterNames = agreeVotes.map(voter => {
+                                const info = modelInfo[voter] || { playerName: voter.split('/').pop() };
+                                return info.playerName;
+                            });
+                            
+                            const disagreeVoterNames = disagreeVotes.map(voter => {
+                                const info = modelInfo[voter] || { playerName: voter.split('/').pop() };
+                                return info.playerName;
+                            });
+                            
+                            dialogueHtml += `<div style="margin-top: 20px; padding: 10px; background-color: #f5f8ff; border-radius: 4px; border-left: 4px solid #4a6da7;">
+                                <strong>Confirmation Vote for ${playerToEliminate}:</strong><br>
+                                <span style="color: green; display: block; margin-top: 5px;">✓ Agree: ${agreeVotes.length} (${agreeVoterNames.join(', ') || 'None'})</span>
+                                <span style="color: red; display: block; margin-top: 5px;">✗ Disagree: ${disagreeVotes.length} (${disagreeVoterNames.join(', ') || 'None'})</span>
+                            </div>`;
+                        }
+                        
+                        dialogueHtml += `</div></div>`;
+                    }
+                }
+            });
+            
+            if (dialogueHtml === '') {
+                dialogueElement.innerHTML = '<div class="error">No dialogue data available</div>';
+            } else {
+                dialogueElement.innerHTML = dialogueHtml;
+            }
+        }
+        
+        // Helper function to create player status list HTML for dialogue view
+        function createPlayerStatusListHTML(data, roundIndex, position) {
+            const participants = data.participants || {};
+            const eliminatedPlayers = getEliminatedPlayers(data, roundIndex, position === 'end');
+            
+            let html = '';
+            
+            // Add each player with their role
+            Object.entries(participants).forEach(([playerName, roleData]) => {
+                // Check if player is eliminated by model_name or player_name
+                const modelName = roleData.model_name || playerName;
+                const isEliminated = eliminatedPlayers.has(modelName) || eliminatedPlayers.has(playerName);
+                
+                if (!isEliminated) {
+                    const { role, roleClass, modelId } = getPlayerInfo(playerName, roleData);
+                    
+                    html += `<div class="player-status-item ${roleClass}">
+                        <span class="player-status-name">${playerName}</span>
+                        <span class="player-status-role">${role}</span>
+                        <span class="player-status-model">${window.LlmBranding.renderModelIdentity(modelId, { compact: true })}</span>
+                    </div>`;
+                }
+            });
+            
+            return html;
+        }
+        
+        // Function to display game result
+        function displayGameResult(data) {
+            const resultElement = document.getElementById('gameResult');
+            
+            if (!data.winner) {
+                resultElement.innerHTML = '<div class="error">No result data available</div>';
+                return;
+            }
+            
+            // Determine winner class
+            let winnerClass = '';
+            if (data.winner.toLowerCase().includes('mafia')) {
+                winnerClass = 'mafia';
+            } else if (data.winner.toLowerCase().includes('villager')) {
+                winnerClass = 'villager';
+            }
+            
+            // Get eliminated players
+            const eliminated = [];
+            if (data.rounds) {
+                data.rounds.forEach(round => {
+                    if (round.eliminations && round.eliminations.length > 0) {
+                        round.eliminations.forEach(player => {
+                            eliminated.push(player.split('/').pop());
+                        });
+                    }
+                });
+            }
+            
+            resultElement.innerHTML = `
+                <div class="result-title">Game Result</div>
+                <div class="winner ${winnerClass}">${data.winner} Win!</div>
+                ${eliminated.length > 0 ? 
+                    `<p><strong>Eliminated Players:</strong> ${eliminated.join(', ')}</p>` : 
+                    ''}
+                <p><strong>Game ID:</strong> ${data.game_id}</p>
+            `;
+        }
+        
+        // Function to switch tabs
+        function switchTab(tabId) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Deactivate all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Activate selected tab and content
+            document.getElementById(tabId).classList.add('active');
+            document.querySelector(`.tab[onclick="switchTab('${tabId}')"]`).classList.add('active');
+        }
+        
+        // Game Visualization Functions
+        function initializeVisualization(data) {
+            if (!data || !data.participants || !data.rounds) {
+                document.getElementById('gameVisualization').innerHTML = '<div class="error">No data available for visualization</div>';
+                return;
+            }
+            
+            const visualizationContainer = document.getElementById('gameVisualization');
+            
+            // Create the visualization structure
+            visualizationContainer.innerHTML = `
+                <div class="game-table">
+                    <div class="day-overlay"></div>
+                    <!-- Players will be added here dynamically -->
+                </div>
+            `;
+            
+            const gameTable = visualizationContainer.querySelector('.game-table');
+            const participants = Object.entries(data.participants);
+            const playerCount = participants.length;
+            
+            // Add players around the table
+            participants.forEach(([model, roleData], index) => {
+                const angle = (index / playerCount) * 2 * Math.PI;
+                const centerX = 300; // Center of the table
+                const centerY = 300;
+                const radius = 220; // Distance from center
+                
+                // Calculate position
+                const x = centerX + radius * Math.cos(angle) - 40; // 40 is half the player width
+                const y = centerY + radius * Math.sin(angle) - 40; // 40 is half the player height
+                
+                // Get role and player name
+                let role, playerName;
+                if (typeof roleData === 'object') {
+                    role = roleData.role;
+                    playerName = roleData.player_name || model.split('/').pop();
+                } else {
+                    // Legacy format where roleData is just the role string
+                    role = roleData;
+                    playerName = model.split('/').pop();
+                }
+                
+                // Create player element
+                const playerElement = document.createElement('div');
+                playerElement.className = `player ${role.toLowerCase()}`;
+                playerElement.id = `player-${model.split('/').pop()}`;
+                playerElement.style.left = `${x}px`;
+                playerElement.style.top = `${y}px`;
+                
+                // Create player avatar and info
+                const modelName = model.split('/').pop();
+                const shortName = playerName.length > 10 ? playerName.substring(0, 10) + '...' : playerName;
+                playerElement.innerHTML = `
+                    <div class="player-avatar">${playerName.charAt(0)}</div>
+                    <div class="player-name">${shortName}</div>
+                    <div class="player-role">${role}</div>
+                    <div class="speech-bubble"></div>
+                `;
+                
+                gameTable.appendChild(playerElement);
+            });
+            
+            // Initialize visualization state
+            initializeVisualizationControls(data);
+        }
+        
+        // Visualization state variables
+        let currentRoundIndex = 0;
+        let currentMessageIndex = -1;
+        let isPlaying = false;
+        let playInterval = null;
+        let visualizationSpeed = 2000; // 2 seconds per message
+        
+        function initializeVisualizationControls(data) {
+            const playPauseBtn = document.getElementById('playPauseBtn');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            
+            // Enable next button if there are messages
+            if (data.rounds && data.rounds.length > 0 && data.rounds[0].messages && data.rounds[0].messages.length > 0) {
+                nextBtn.disabled = false;
+            }
+            
+            // Play/Pause button
+            playPauseBtn.addEventListener('click', () => {
+                if (isPlaying) {
+                    pauseVisualization();
+                } else {
+                    playVisualization(data);
+                }
+            });
+            
+            // Next button
+            nextBtn.addEventListener('click', () => {
+                pauseVisualization();
+                showNextMessage(data);
+            });
+            
+            // Previous button
+            prevBtn.addEventListener('click', () => {
+                pauseVisualization();
+                showPreviousMessage(data);
+            });
+            
+            // Initialize with the first round and phase
+            updateGamePhaseDisplay(data.rounds[0].phase || 'day');
+            document.getElementById('roundInfo').textContent = `Round 1`;
+            
+            // Mark eliminated players
+            updatePlayerStatus(data);
+        }
+        
+        function playVisualization(data) {
+            isPlaying = true;
+            document.getElementById('playPauseBtn').textContent = 'Pause';
+            document.getElementById('playPauseBtn').classList.remove('play');
+            document.getElementById('playPauseBtn').classList.add('pause');
+            
+            // Clear any existing interval
+            if (playInterval) clearInterval(playInterval);
+            
+            // Start playing from current position
+            playInterval = setInterval(() => {
+                const hasMore = showNextMessage(data);
+                if (!hasMore) {
+                    pauseVisualization();
+                }
+            }, visualizationSpeed);
+        }
+        
+        function pauseVisualization() {
+            isPlaying = false;
+            document.getElementById('playPauseBtn').textContent = 'Play';
+            document.getElementById('playPauseBtn').classList.remove('pause');
+            document.getElementById('playPauseBtn').classList.add('play');
+            
+            if (playInterval) {
+                clearInterval(playInterval);
+                playInterval = null;
+            }
+        }
+        
+        function showNextMessage(data) {
+            // Clear any existing speech bubbles
+            clearSpeechBubbles();
+            
+            // Get current round
+            const round = data.rounds[currentRoundIndex];
+            if (!round || !round.messages) return false;
+            
+            // Move to next message
+            currentMessageIndex++;
+            
+            // Check if we need to move to the next round
+            if (currentMessageIndex >= round.messages.length) {
+                currentRoundIndex++;
+                currentMessageIndex = 0;
+                
+                // Check if we've reached the end of all rounds
+                if (currentRoundIndex >= data.rounds.length) {
+                    currentRoundIndex = data.rounds.length - 1;
+                    currentMessageIndex = data.rounds[currentRoundIndex].messages.length - 1;
+                    return false; // No more messages
+                }
+                
+                // Update round info and phase
+                const newRound = data.rounds[currentRoundIndex];
+                updateGamePhaseDisplay(newRound.phase || 'day');
+                document.getElementById('roundInfo').textContent = `Round ${currentRoundIndex + 1}`;
+                
+                // Add round transition event
+                addEventLogItem(`Round ${currentRoundIndex + 1} started - ${newRound.phase || 'day'} phase`, true);
+                
+                // Update player status for the new round
+                updatePlayerStatus(data, currentRoundIndex);
+            }
+            
+            // Get the current message
+            const message = data.rounds[currentRoundIndex].messages[currentMessageIndex];
+            
+            // Display the message
+            if (message && message.speaker) {
+                const speakerElement = document.getElementById(`player-${message.speaker.split('/').pop()}`);
+                if (speakerElement) {
+                    // Highlight the speaking player
+                    document.querySelectorAll('.player').forEach(p => p.classList.remove('speaking'));
+                    speakerElement.classList.add('speaking');
+                    
+                    // Show speech bubble
+                    const speechBubble = speakerElement.querySelector('.speech-bubble');
+                    if (speechBubble) {
+                        // Truncate long messages
+                        const formattedContent = summarizeMessageContent(message.content, 100);
+                        
+                        speechBubble.textContent = formattedContent;
+                        speechBubble.classList.add('visible');
+                    }
+                    
+                    // Add to event log
+                    addEventLogItem(`${message.speaker.split('/').pop()}: ${summarizeMessageContent(message.content, 50)}`);
+                }
+            }
+            
+            // Update button states
+            document.getElementById('prevBtn').disabled = (currentRoundIndex === 0 && currentMessageIndex === 0);
+            document.getElementById('nextBtn').disabled = (currentRoundIndex === data.rounds.length - 1 && 
+                                                         currentMessageIndex === data.rounds[currentRoundIndex].messages.length - 1);
+            
+            return true; // More messages available
+        }
+        
+        function showPreviousMessage(data) {
+            // Clear any existing speech bubbles
+            clearSpeechBubbles();
+            
+            // Move to previous message
+            currentMessageIndex--;
+            
+            // Check if we need to move to the previous round
+            if (currentMessageIndex < 0) {
+                currentRoundIndex--;
+                
+                // Check if we've reached the beginning
+                if (currentRoundIndex < 0) {
+                    currentRoundIndex = 0;
+                    currentMessageIndex = 0;
+                    return false; // No more previous messages
+                }
+                
+                // Set to the last message of the previous round
+                const prevRound = data.rounds[currentRoundIndex];
+                currentMessageIndex = prevRound.messages ? prevRound.messages.length - 1 : 0;
+                
+                // Update round info and phase
+                updateGamePhaseDisplay(prevRound.phase || 'day');
+                document.getElementById('roundInfo').textContent = `Round ${currentRoundIndex + 1}`;
+                
+                // Add round transition event
+                addEventLogItem(`Moved back to Round ${currentRoundIndex + 1} - ${prevRound.phase || 'day'} phase`, true);
+                
+                // Update player status for the previous round
+                updatePlayerStatus(data, currentRoundIndex);
+            }
+            
+            // Get the current message
+            const round = data.rounds[currentRoundIndex];
+            if (!round || !round.messages) return false;
+            
+            const message = round.messages[currentMessageIndex];
+            
+            // Display the message
+            if (message && message.speaker) {
+                const speakerElement = document.getElementById(`player-${message.speaker.split('/').pop()}`);
+                if (speakerElement) {
+                    // Highlight the speaking player
+                    document.querySelectorAll('.player').forEach(p => p.classList.remove('speaking'));
+                    speakerElement.classList.add('speaking');
+                    
+                    // Show speech bubble
+                    const speechBubble = speakerElement.querySelector('.speech-bubble');
+                    if (speechBubble) {
+                        // Truncate long messages
+                        const formattedContent = summarizeMessageContent(message.content, 100);
+                        
+                        speechBubble.textContent = formattedContent;
+                        speechBubble.classList.add('visible');
+                    }
+                    
+                    // Add to event log
+                    addEventLogItem(`${message.speaker.split('/').pop()}: ${summarizeMessageContent(message.content, 50)}`);
+                }
+            }
+            
+            // Update button states
+            document.getElementById('prevBtn').disabled = (currentRoundIndex === 0 && currentMessageIndex === 0);
+            document.getElementById('nextBtn').disabled = (currentRoundIndex === data.rounds.length - 1 && 
+                                                         currentMessageIndex === data.rounds[currentRoundIndex].messages.length - 1);
+            
+            return true; // More previous messages available
+        }
+        
+        function clearSpeechBubbles() {
+            document.querySelectorAll('.speech-bubble').forEach(bubble => {
+                bubble.classList.remove('visible');
+                bubble.textContent = '';
+            });
+        }
+        
+        function updateGamePhaseDisplay(phase) {
+            const gamePhaseElement = document.getElementById('gamePhase');
+            const dayOverlay = document.querySelector('.day-overlay');
+            
+            if (phase.toLowerCase() === 'night') {
+                gamePhaseElement.textContent = 'Night Phase';
+                gamePhaseElement.className = 'game-phase phase-night';
+                
+                // Change to night overlay
+                dayOverlay.className = 'night-overlay';
+                dayOverlay.style.animation = 'dayToNight 1s forwards';
+            } else {
+                gamePhaseElement.textContent = 'Day Phase';
+                gamePhaseElement.className = 'game-phase phase-day';
+                
+                // Change to day overlay
+                dayOverlay.className = 'day-overlay';
+                dayOverlay.style.animation = 'nightToDay 1s forwards';
+            }
+        }
+        
+        function updatePlayerStatus(data, roundIndex = 0) {
+            // Create a mapping of model names to player names
+            const modelInfo = createModelInfoMapping(data.participants);
+            
+            // Reset all players
+            document.querySelectorAll('.player').forEach(player => {
+                player.classList.remove('dead');
+                player.classList.remove('targeted');
+                player.classList.remove('protected');
+            });
+            
+            // Mark eliminated players
+            const eliminatedPlayers = getEliminatedPlayers(data, roundIndex, true);
+            
+            // Mark targeted players for the current round
+            const targetedPlayers = new Set();
+            const protectedPlayers = new Set();
+            
+            // Process all rounds up to the current one
+            for (let i = 0; i <= roundIndex; i++) {
+                const round = data.rounds[i];
+                
+                // Add players targeted by mafia
+                if (round.targeted_by_mafia) {
+                    round.targeted_by_mafia.forEach(player => {
+                        // Only add to targeted if they weren't protected
+                        const wasProtected = round.protected_by_doctor && 
+                                           round.protected_by_doctor.includes(player);
+                        
+                        if (!wasProtected) {
+                            eliminatedPlayers.add(player);
+                        }
+                        
+                        // Always mark as targeted for the current round visualization
+                        if (i === roundIndex) {
+                            targetedPlayers.add(player);
+                        }
+                    });
+                }
+                
+                // Add protected players for the current round
+                if (i === roundIndex && round.protected_by_doctor) {
+                    round.protected_by_doctor.forEach(player => protectedPlayers.add(player));
+                }
+                
+                // Add any other eliminations (fallback)
+                if (round.eliminations) {
+                    round.eliminations.forEach(player => eliminatedPlayers.add(player));
+                }
+            }
+            
+            // Mark eliminated players as dead
+            eliminatedPlayers.forEach(player => {
+                const playerName = modelInfo[player] || player.split('/').pop();
+                const playerElement = document.getElementById(`player-${player.split('/').pop()}`);
+                if (playerElement) {
+                    playerElement.classList.add('dead');
+                    
+                    // Add elimination event if this is the current round
+                    if (roundIndex === currentRoundIndex) {
+                        addEventLogItem(`${playerName} was eliminated!`, true);
+                    }
+                }
+            });
+            
+            // Mark targeted players for the current round
+            targetedPlayers.forEach(player => {
+                const playerName = modelInfo[player] || player.split('/').pop();
+                const playerElement = document.getElementById(`player-${player.split('/').pop()}`);
+                if (playerElement && !playerElement.classList.contains('dead')) {
+                    playerElement.classList.add('targeted');
+                }
+            });
+            
+            // Mark protected players for the current round
+            protectedPlayers.forEach(player => {
+                const playerName = modelInfo[player] || player.split('/').pop();
+                const playerElement = document.getElementById(`player-${player.split('/').pop()}`);
+                if (playerElement) {
+                    playerElement.classList.add('protected');
+                    
+                    // Add protection event if this is the current round
+                    if (roundIndex === currentRoundIndex && targetedPlayers.has(player)) {
+                        addEventLogItem(`${playerName} was protected by the Doctor!`, true);
+                    }
+                }
+            });
+        }
+        
+        function addEventLogItem(text, important = false) {
+            const eventLog = document.getElementById('eventLog');
+            const eventItem = document.createElement('div');
+            eventItem.className = `event-item${important ? ' important' : ''}`;
+            eventItem.textContent = text;
+            
+            // Add to the top of the log
+            eventLog.insertBefore(eventItem, eventLog.firstChild);
+            
+            // Limit the number of items
+            while (eventLog.children.length > 20) {
+                eventLog.removeChild(eventLog.lastChild);
+            }
+        }
+        
+        // Function to create night phase summary
+        function createNightPhaseSummary(roundIndex, prevRound, participants) {
+            if (!prevRound) return '';
+            
+            let summaryHtml = `<div class="dialogue-message night-phase">
+                <div class="dialogue-speaker phase-header"><strong>Midnight Activities - Results</strong></div>
+                <div class="dialogue-content">`;
+            
+            // Create a mapping of model names to player names using our helper function
+            const modelInfo = createModelInfoMapping(participants);
+            
+            // Show mafia targets
+            if (prevRound.targeted_by_mafia && prevRound.targeted_by_mafia.length > 0) {
+                const targetModel = prevRound.targeted_by_mafia[0];
+                const targetInfo = modelInfo[targetModel] || { playerName: targetModel.split('/').pop() };
+                const wasProtected = prevRound.protected_by_doctor && 
+                                    prevRound.protected_by_doctor.includes(prevRound.targeted_by_mafia[0]);
+                
+                summaryHtml += `<div class="action-list mafia-target" style="margin-bottom: 10px; ${wasProtected ? 'border-left: 3px solid #28a745;' : 'border-left: 3px solid #dc3545;'}">
+                    <strong>Mafia Target:</strong> ${targetInfo.playerName}
+                    ${wasProtected ? ' <span style="color: #28a745;">(Protected by Doctor)</span>' : ' <span style="color: #dc3545;">(Killed)</span>'}
+                </div>`;
+            }
+            
+            // Show mafia kill votes
+            const mafiaActions = [];
+            if (prevRound.actions) {
+                Object.entries(prevRound.actions).forEach(([model, action]) => {
+                    // Handle both old and new format for role check
+                    let role;
+                    if (typeof participants[model] === 'object') {
+                        role = participants[model].role;
+                    } else {
+                        role = participants[model];
+                    }
+                    
+                    if (typeof role === 'string' && role === 'Mafia' && action.includes('Kill')) {
+                        const voterName = modelInfo[model] || model.split('/').pop();
+                        const targetRaw = action.replace('Kill ', '');
+                        mafiaActions.push(`${voterName} voted to kill ${targetRaw}`);
+                    }
+                });
+            }
+            
+            if (mafiaActions.length > 0) {
+                summaryHtml += `<div class="action-list" style="margin-bottom: 10px;">
+                    <strong>Mafia Votes:</strong> ${mafiaActions.join(', ')}
+                </div>`;
+            }
+            
+            // Show doctor protection
+            if (prevRound.protected_by_doctor && prevRound.protected_by_doctor.length > 0) {
+                const protectedModel = prevRound.protected_by_doctor[0];
+                // Fix: Ensure we get the player name properly from the modelInfo mapping
+                const protectedInfo = modelInfo[protectedModel] || { playerName: protectedModel.split('/').pop() };
+                const protectedName = protectedInfo.playerName;
+                const wasTargeted = prevRound.targeted_by_mafia && 
+                                   prevRound.targeted_by_mafia.includes(prevRound.protected_by_doctor[0]);
+                
+                summaryHtml += `<div class="action-list doctor-protection" style="margin-bottom: 10px; border-left: 3px solid #28a745;">
+                    <strong>Doctor Protected:</strong> ${protectedName}
+                    ${wasTargeted ? ' <span style="color: #28a745;">(Saved from Mafia)</span>' : ' <span style="color: #6c757d;">(Not targeted by Mafia)</span>'}
+                </div>`;
+            } else {
+                // Show doctor action from actions if available
+                const doctorActions = [];
+                if (prevRound.actions) {
+                    Object.entries(prevRound.actions).forEach(([model, action]) => {
+                        // Handle both old and new format for role check
+                        let role;
+                        if (typeof participants[model] === 'object') {
+                            role = participants[model].role;
+                        } else {
+                            role = participants[model];
+                        }
+                        
+                        if (typeof role === 'string' && role === 'Doctor' && action.includes('Protect')) {
+                            const doctorName = modelInfo[model] || model.split('/').pop();
+                            const targetRaw = action.replace('Protect ', '');
+                            doctorActions.push(`${doctorName} protected ${targetRaw}`);
+                        }
+                    });
+                }
+                
+                if (doctorActions.length > 0) {
+                    summaryHtml += `<div class="action-list" style="margin-bottom: 10px;">
+                        <strong>Doctor Action:</strong> ${doctorActions.join(', ')}
+                    </div>`;
+                }
+            }
+            
+            // Show eliminations during the night if any
+            const nightEliminations = prevRound.eliminations ? prevRound.eliminations.filter(
+                player => !prevRound.eliminated_by_vote || !prevRound.eliminated_by_vote.includes(player)
+            ) : [];
+            
+            if (nightEliminations.length > 0) {
+                const eliminatedNames = nightEliminations.map(model => {
+                    // Fix: Properly extract player name from modelInfo
+                    const modelInfo = createModelInfoMapping(participants);
+                    const playerInfo = modelInfo[model] || { playerName: model.split('/').pop() };
+                    return playerInfo.playerName;
+                });
+                
+                summaryHtml += `<div class="night-eliminations" style="color: #d9534f; font-weight: bold; margin-top: 10px;">
+                    Players killed during the night: ${eliminatedNames.join(', ')}
+                </div>`;
+            }
+            
+            summaryHtml += `</div></div>`;
+            return summaryHtml;
+        }
+        
+        // Function to display critic review
+        function displayCriticReview(data) {
+            const criticElement = document.getElementById('gameCritic');
+            
+            if (!data.critic_review) {
+                criticElement.innerHTML = '<div class="no-data">No critic review available for this game.</div>';
+                return;
+            }
+            
+            const review = data.critic_review;
+            
+            // Create the critic review HTML
+            let criticHtml = `
+                <div class="critic-container">
+                    <div class="critic-header">
+                        <div class="critic-avatar">
+                            <img src="/static/images/claude_avatar.webp" alt="Claude" onerror="this.src='/static/images/default_avatar.avif'">
+                            </div>
+                            <div class="critic-info">
+                                <div class="critic-name">Mr. Claude 3.7 Sonnet</div>
+                                <div class="critic-title">AI Game Critic</div>
+                            </div>
+                    </div>
+                    <div class="critic-content">
+                        <h3 class="review-title">${review.title}</h3>
+                        <div class="review-body">
+                            ${review.content.replace(/\n/g, '<br>')}
+                        </div>
+                        ${review.one_liner ? `<div class="critic-one-liner">"${review.one_liner}"</div>` : ''}
+                    </div>
+                </div>
+            `;
+            
+            criticElement.innerHTML = criticHtml;
+        }
+        
+        // Add event listener for when the page is fully loaded
+        window.addEventListener('load', scrollToSharedMessage);
+    </script>
+{% endblock %}
