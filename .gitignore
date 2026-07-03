@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+ENV/
+env/
+
+# Firebase credentials
+firebase_credentials.json
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db 
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+games_played.png
+win_rates.png
+
+scripts/remote-config.sh
+
+*/node_modules
+
+.cursor

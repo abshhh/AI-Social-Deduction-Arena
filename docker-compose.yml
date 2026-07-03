@@ -1,0 +1,35 @@
+services:
+  dashboard:
+    build: .
+    image: guzus/llm-mafia-game-dashboard:latest
+    platform: linux/amd64
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./firebase_credentials.json:/app/firebase_credentials.json
+      - ./logs/dashboard:/app/logs
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+    command: uv run src/dashboard.py --port 5001
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+
+  simulation:
+    build: .
+    image: guzus/llm-mafia-game-simulation:latest
+    platform: linux/amd64
+    volumes:
+      - ./firebase_credentials.json:/app/firebase_credentials.json
+      - ./logs/simulation:/app/logs
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - NUM_GAMES=${NUM_GAMES}
+    command: uv run src/simulate.py
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
